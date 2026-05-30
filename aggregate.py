@@ -3,6 +3,7 @@
 This is a static RSS aggregator
 """
 
+import shutil
 import logging
 import argparse
 from pathlib import Path
@@ -29,7 +30,7 @@ def import_feeds(args):
 
 
 def export_feeds(args):
-    pass
+    shutil.copy(args.data_dir / 'feeds.xml', args.opml_file)
 
 
 def main():
