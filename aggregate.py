@@ -3,10 +3,29 @@
 This is a static RSS aggregator
 """
 
+import sys
 import shutil
 import logging
 import argparse
+import xml.etree.ElementTree as ET
 from pathlib import Path
+
+
+def init_data(data_dir: Path):
+    # Create directory
+    data_dir.mkdir(mode=0o755, exist_ok=True)
+    # Create feeds file
+    opml_root = ET.fromstring('''\
+<opml version="2.0">
+    <head>
+        <title>Static RSS aggregator feeds</title>
+    </head>
+    <body>
+    </body>
+</opml>''')
+    opml_tree = ET.ElementTree(opml_root)
+    opml_tree.write(data_dir / 'feeds.xml', encoding='utf-8')
+    
 
 
 def add_feed(args):
@@ -26,7 +45,42 @@ def fetch_feeds(args):
 
 
 def import_feeds(args):
-    pass
+    if not args.data_dir.exists():
+        init_data(args.data_dir)
+    # Load new OPML feed and check its type
+    new_opml_tree = ET.parse(args.opml_file)
+    new_opml_root = new_opml_tree.getroot()
+    if new_opml_root.tag != 'opml':
+        logging.error(f'File {args.opml_file} is not a OPML feed')
+        sys.exit(1)
+    # Load internal OPML feed
+    internal_opml_tree = ET.parse(args.data_dir / 'feeds.xml')
+    internal_opml_root = internal_opml_tree.getroot()
+    internal_opml_body = internal_opml_root.find('body')
+    # Iterate through entries in the new feed and look up
+    # in the internal feed if it contains entries with the same URL
+    for new_outline in new_opml_root.iterfind('body/outline'):
+        feed_title = new_outline.get('title')
+        if new_outline.get('type') != 'rss':
+            logging.warning(f'Skipping outline {feed_title} that is not RSS feed')
+        feed_url = new_outline.get('xmlUrl')
+        found = internal_opml_root.find(f'body/outline[@xmlUrl="{feed_url}"]')
+        if found is None:
+            logging.info(f'Importing new feed {feed_title} with URL {feed_url}')
+            # TODO Import title, text, htmlUrl from the feed fetched
+            internal_outline = ET.Element('outline', attrib={
+                'title': feed_title,
+                'text': new_outline.get('text'),
+                'type': 'rss',
+                'xmlUrl': feed_url
+            })
+            if new_outline.get('htmlUrl') is not None:
+                internal_outline.set('htmlUrl', new_outline.get('htmlUrl'))
+            internal_opml_body.append(internal_outline)
+        else:
+            logging.warning(f'Skipping already known feed {feed_title} with URL {feed_url}')
+    # Write internal feed
+    internal_opml_tree.write(args.data_dir / 'feeds.xml', encoding='utf-8')
 
 
 def export_feeds(args):
@@ -34,8 +88,6 @@ def export_feeds(args):
 
 
 def main():
-    import sys
-
     logging.basicConfig(format='%(asctime)s %(levelname)-8s %(message)s', level=logging.INFO)
 
     parser = argparse.ArgumentParser(description=sys.modules[__name__].__doc__)
@@ -66,7 +118,10 @@ def main():
     parser_export.set_defaults(func=export_feeds)
 
     args = parser.parse_args()
-    args.func(args)
+    if hasattr(args, 'func'):
+        args.func(args)
+    else:
+        parser.print_usage()
 
 
 if __name__ == '__main__':
