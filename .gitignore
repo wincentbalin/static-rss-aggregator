@@ -180,5 +180,9 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Ignore OPML export file
+# Ignore test data
+test_dir/
 aggregator.xml
+
+# Ignore VS Code settings
+.vscode
