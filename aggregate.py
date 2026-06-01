@@ -25,7 +25,18 @@ def init_data(data_dir: Path):
 </opml>''')
     opml_tree = ET.ElementTree(opml_root)
     opml_tree.write(data_dir / 'feeds.xml', encoding='utf-8')
-    
+
+
+def get_max_feed_index(data_dir: Path) -> int:
+    index = 0
+    for entry in data_dir.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            index = max(index, int(entry.name))
+        except ValueError:
+            continue
+    return index
 
 
 def add_feed(args):
@@ -59,26 +70,28 @@ def import_feeds(args):
     internal_opml_body = internal_opml_root.find('body')
     # Iterate through entries in the new feed and look up
     # in the internal feed if it contains entries with the same URL
+    feed_index = get_max_feed_index(args.data_dir) + 1
     for new_outline in new_opml_root.iterfind('body/outline'):
         feed_title = new_outline.get('title')
         if new_outline.get('type') != 'rss':
             logging.warning(f'Skipping outline {feed_title} that is not RSS feed')
+            continue
         feed_url = new_outline.get('xmlUrl')
         found = internal_opml_root.find(f'body/outline[@xmlUrl="{feed_url}"]')
-        if found is None:
-            logging.info(f'Importing new feed {feed_title} with URL {feed_url}')
-            # TODO Import title, text, htmlUrl from the feed fetched
-            internal_outline = ET.Element('outline', attrib={
-                'title': feed_title,
-                'text': new_outline.get('text'),
-                'type': 'rss',
-                'xmlUrl': feed_url
-            })
-            if new_outline.get('htmlUrl') is not None:
-                internal_outline.set('htmlUrl', new_outline.get('htmlUrl'))
-            internal_opml_body.append(internal_outline)
-        else:
+        if found is not None:
             logging.warning(f'Skipping already known feed {feed_title} with URL {feed_url}')
+            continue
+        logging.info(f'Importing new feed {feed_title} with URL {feed_url}')
+        # TODO Import title, text, htmlUrl from the feed fetched
+        internal_outline = ET.Element('outline', attrib={
+            'title': feed_title,
+            'text': new_outline.get('text'),
+            'type': 'rss',
+            'xmlUrl': feed_url
+        })
+        if new_outline.get('htmlUrl') is not None:
+            internal_outline.set('htmlUrl', new_outline.get('htmlUrl'))
+        internal_opml_body.append(internal_outline)
     # Write internal feed
     internal_opml_tree.write(args.data_dir / 'feeds.xml', encoding='utf-8')
 
