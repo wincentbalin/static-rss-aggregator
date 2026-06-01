@@ -47,6 +47,10 @@ def list_feeds(args):
     pass
 
 
+def rename_feed(args):
+    pass
+
+
 def remove_feed(args):
     pass
 
@@ -114,6 +118,11 @@ def main():
     
     parser_list = subparsers.add_parser('list', help='List feeds')
     parser_list.set_defaults(func=list_feeds)
+
+    parser_rename = subparsers.add_parser('rename', help='Rename feed')
+    parser_rename.add_argument('feed_index', type=int, help='Index of the feed to be renamed')
+    parser_rename.add_argument('name', help='New name')
+    parser_rename.set_defaults(func=feed_rename)
     
     parser_rm = subparsers.add_parser('rm', help='Remove feed')
     parser_rm.add_argument('feed_index', type=int, help='Index of the feed to be removed')
