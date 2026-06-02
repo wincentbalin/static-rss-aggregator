@@ -7,8 +7,11 @@ import sys
 import shutil
 import logging
 import argparse
+import urllib.error
+import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import Union
 
 
 def init_data(data_dir: Path):
@@ -37,6 +40,56 @@ def get_max_feed_index(data_dir: Path) -> int:
         except ValueError:
             continue
     return index
+
+
+def fetch_feed(feed_dir: Path, url: str, name='current.xml'):
+    with urllib.request.urlopen(url) as response, open(feed_dir / name, 'wb') as file:
+        shutil.copyfileobj(response, file)
+
+
+def find_element_without_attribute(parent: ET.Element, xpath: str, att_name: str, namespaces) -> Union[ET.Element, None]:
+    els = parent.findall(xpath, namespaces=namespaces)
+    for el in els:
+        if att_name not in el.attrib.keys():
+            return el
+    return None
+
+
+def init_main_feed_and_get_properties(feed_path: Path) -> dict:
+    # Load feed file
+    feed_tree = ET.parse(feed_path)
+    feed_root = feed_tree.getroot()
+    # Add stylesheet (different for RSS and Atom)
+    if feed_root.tag == 'rss':
+        # This is RSS feed
+        namespaces = {'atom': 'http://www.w3.org/2005/Atom'}
+        title = feed_root.find('title')
+        title_value = title.text
+        xml_url = feed_root.find('atom:link[@rel="self"]', namespaces=namespaces)
+        xml_url_value = xml_url.text
+        html_url = feed_root.find('link')
+        html_url_value = html_url.text
+        feed_tree.write(feed_path, encoding='utf-8')
+    elif feed_root.tag == '{http://www.w3.org/2005/Atom}feed':
+        # This is Atom feed
+        namespaces = {'atom': 'http://www.w3.org/2005/Atom'}
+        title = feed_root.find('atom:id', namespaces=namespaces)
+        title_value = title.text
+        xml_url = feed_root.find('atom:link[@rel="self"]', namespaces=namespaces)
+        xml_url_value = xml_url.text
+        html_url = feed_root.find('atom:link[@rel="alternate"]', namespaces=namespaces)
+        if html_url is None:
+            html_url = find_element_without_attribute(feed_root, 'atom:link', 'rel', namespaces)
+        html_url_value = None if html_url is None else html_url.get('href')
+        feed_tree.write(feed_path, encoding='utf-8', default_namespace=namespaces['atom'], xml_declaration=True)
+    else:
+        raise ValueError('Unknown feed format!')
+    # Return feed properties
+    return {
+        'title': title_value,
+        'xmlUrl': xml_url_value,
+        'htmlUrl': html_url_value
+    }
 
 
 def add_feed(args):
@@ -74,27 +127,42 @@ def import_feeds(args):
     internal_opml_body = internal_opml_root.find('body')
     # Iterate through entries in the new feed and look up
     # in the internal feed if it contains entries with the same URL
-    feed_index = get_max_feed_index(args.data_dir) + 1
     for new_outline in new_opml_root.iterfind('body/outline'):
         feed_title = new_outline.get('title')
+        feed_url = new_outline.get('xmlUrl')
         if new_outline.get('type') != 'rss':
             logging.warning(f'Skipping outline {feed_title} that is not RSS feed')
             continue
-        feed_url = new_outline.get('xmlUrl')
         found = internal_opml_root.find(f'body/outline[@xmlUrl="{feed_url}"]')
         if found is not None:
             logging.warning(f'Skipping already known feed {feed_title} with URL {feed_url}')
             continue
         logging.info(f'Importing new feed {feed_title} with URL {feed_url}')
-        # TODO Import title, text, htmlUrl from the feed fetched
+        # Make feed directory and download feed file
+        feed_index = get_max_feed_index(args.data_dir) + 1
+        feed_dir = args.data_dir / str(feed_index)
+        feed_dir.mkdir(mode=0o755)
+        try:
+            fetch_feed(feed_dir, feed_url)
+        except urllib.error.URLError as e:
+            logging.error(f'Error fetching feed: {e.reason}')
+            feed_dir.rmdir()
+            continue
+        except ValueError as e:
+            logging.error(f'Error fetching feed: {e}')
+            feed_dir.rmdir()
+            continue
+        # Copy new feed to main feed with additional information
+        shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
+        props = init_main_feed_and_get_properties(feed_dir / 'feed.xml')
         internal_outline = ET.Element('outline', attrib={
-            'title': feed_title,
-            'text': new_outline.get('text'),
+            'title': props['title'],
+            'text': props['title'],
             'type': 'rss',
-            'xmlUrl': feed_url
+            'xmlUrl': props['xmlUrl'],
+            'htmlUrl': props['htmlUrl'],
+            'index': str(feed_index)
         })
-        if new_outline.get('htmlUrl') is not None:
-            internal_outline.set('htmlUrl', new_outline.get('htmlUrl'))
         internal_opml_body.append(internal_outline)
     # Write internal feed
     internal_opml_tree.write(args.data_dir / 'feeds.xml', encoding='utf-8')
@@ -122,7 +190,7 @@ def main():
     parser_rename = subparsers.add_parser('rename', help='Rename feed')
     parser_rename.add_argument('feed_index', type=int, help='Index of the feed to be renamed')
     parser_rename.add_argument('name', help='New name')
-    parser_rename.set_defaults(func=feed_rename)
+    parser_rename.set_defaults(func=rename_feed)
     
     parser_rm = subparsers.add_parser('rm', help='Remove feed')
     parser_rm.add_argument('feed_index', type=int, help='Index of the feed to be removed')
