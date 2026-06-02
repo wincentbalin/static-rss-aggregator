@@ -9,16 +9,17 @@ import logging
 import argparse
 import urllib.error
 import urllib.request
-import xml.etree.ElementTree as ET
+import xml.dom.minidom
 from pathlib import Path
-from typing import Union
+from typing import List, Union
+from xml.dom.minidom import Element
 
 
 def init_data(data_dir: Path):
     # Create directory
     data_dir.mkdir(mode=0o755, exist_ok=True)
     # Create feeds file
-    opml_root = ET.fromstring('''\
+    opml_root = xml.dom.minidom.parseString('''\
 <opml version="2.0">
     <head>
         <title>Static RSS aggregator feeds</title>
@@ -26,8 +27,8 @@ def init_data(data_dir: Path):
     <body>
     </body>
 </opml>''')
-    opml_tree = ET.ElementTree(opml_root)
-    opml_tree.write(data_dir / 'feeds.xml', encoding='utf-8')
+    with open(data_dir / 'feeds.xml', 'w', encoding='utf-8') as opml_file:
+        opml_root.writexml(opml_file, encoding='utf-8')
 
 
 def get_max_feed_index(data_dir: Path) -> int:
@@ -47,43 +48,85 @@ def fetch_feed(feed_dir: Path, url: str, name='current.xml'):
         shutil.copyfileobj(response, file)
 
 
-def find_element_without_attribute(parent: ET.Element, xpath: str, att_name: str, namespaces) -> Union[ET.Element, None]:
-    els = parent.findall(xpath, namespaces=namespaces)
-    for el in els:
-        if att_name not in el.attrib.keys():
-            return el
+def getChildElementsByTagName(parent: Element, tagName: str) -> List[Element]:
+    nodes = []
+    for node in parent.childNodes:
+        if node.nodeType == node.ELEMENT_NODE and node.tagName == tagName:
+            nodes.append(node)
+    return nodes
+
+
+def getChildElementByTagName(parent: Element, tagName: str) -> Union[Element, None]:
+    for node in parent.childNodes:
+        if node.nodeType == node.ELEMENT_NODE and node.tagName == tagName:
+            return node
+    return None
+
+
+def getChildElementByTagNameAndAttributeValue(parent: Element, tagName: str,
+                                              attributeName: str, attributeValue: str) -> Union[Element, None]:
+    for node in parent.childNodes:
+        if node.nodeType == node.ELEMENT_NODE and node.tagName == tagName:
+            if node.getAttribute(attributeName) == attributeValue:
+                return node
+    return None
+
+
+def getChildElementWithAttribute(parent: Element, tagName: str, attributeName: str) -> Union[Element, None]:
+    for node in parent.childNodes:
+        if node.nodeType == node.ELEMENT_NODE and node.tagName == tagName:
+            if node.hasAttribute(attributeName):
+                return node
+    return None
+
+
+
+def getChildElementWithoutAttribute(parent: Element, tagName: str, attributeName: str) -> Union[Element, None]:
+    for node in parent.childNodes:
+        if node.nodeType == node.ELEMENT_NODE and node.tagName == tagName:
+            if not node.hasAttribute(attributeName):
+                return node
+    return None
+
+
+def getText(parent: Element) -> Union[str, None]:
+    for node in parent.childNodes:
+        if node.nodeType == node.TEXT_NODE:
+            return node.data
     return None
 
 
 def init_main_feed_and_get_properties(feed_path: Path) -> dict:
     # Load feed file
-    feed_tree = ET.parse(feed_path)
-    feed_root = feed_tree.getroot()
-    # Add stylesheet (different for RSS and Atom)
-    if feed_root.tag == 'rss':
-        # This is RSS feed
-        namespaces = {'atom': 'http://www.w3.org/2005/Atom'}
-        title = feed_root.find('title')
-        title_value = title.text
-        xml_url = feed_root.find('atom:link[@rel="self"]', namespaces=namespaces)
-        xml_url_value = xml_url.text
-        html_url = feed_root.find('link')
-        html_url_value = html_url.text
-        feed_tree.write(feed_path, encoding='utf-8')
-    elif feed_root.tag == '{http://www.w3.org/2005/Atom}feed':
-        # This is Atom feed
-        namespaces = {'atom': 'http://www.w3.org/2005/Atom'}
-        title = feed_root.find('atom:id', namespaces=namespaces)
-        title_value = title.text
-        xml_url = feed_root.find('atom:link[@rel="self"]', namespaces=namespaces)
-        xml_url_value = xml_url.text
-        html_url = feed_root.find('atom:link[@rel="alternate"]', namespaces=namespaces)
-        if html_url is None:
-            html_url = find_element_without_attribute(feed_root, 'atom:link', 'rel', namespaces)
-        html_url_value = None if html_url is None else html_url.get('href')
-        feed_tree.write(feed_path, encoding='utf-8', default_namespace=namespaces['atom'], xml_declaration=True)
-    else:
-        raise ValueError('Unknown feed format!')
+    with open(feed_path, 'r', encoding='utf-8') as feed_file:
+        with xml.dom.minidom.parse(feed_file) as feed_dom:
+            # Add stylesheet (different for RSS and Atom)
+            feed_doc = feed_dom.documentElement
+            if feed_doc.tagName == 'rss':
+                # This is RSS feed
+                channel = getChildElementByTagName(feed_doc, 'channel')
+                title = getChildElementByTagName(channel, 'title')
+                title_value = getText(title).strip()
+                xml_url = getChildElementByTagNameAndAttributeValue(channel, 'atom:link', 'rel', 'self')
+                xml_url_value = xml_url.getAttribute('href')
+                html_url = getChildElementWithoutAttribute(channel, 'link', 'rel')
+                html_url_value = getText(html_url)
+                # Add stylesheet
+            elif feed_doc.tagName == 'feed':
+                # This is Atom feed
+                title = getChildElementByTagName(feed_doc, 'title')
+                title_value = getText(title).strip()
+                xml_url = getChildElementByTagNameAndAttributeValue(feed_doc, 'link', 'rel', 'self')
+                xml_url_value = xml_url.getAttribute('href')
+                html_url = getChildElementByTagNameAndAttributeValue(feed_doc, 'link', 'rel', 'alternate')
+                if html_url is None:
+                    html_url = getChildElementWithoutAttribute(feed_doc, 'link', 'rel')
+                html_url_value = html_url.getAttribute('href')
+                # Add stylesheet
+            else:
+                raise ValueError('Unknown feed format!')
+            #with open(feed_path, 'w', encoding='utf-8') as changed_file:
+            #    feed_dom.writexml(changed_file, encoding='utf-8')
     # Return feed properties
     return {
         'title': title_value,
@@ -116,17 +159,48 @@ def import_feeds(args):
     if not args.data_dir.exists():
         init_data(args.data_dir)
     # Load new OPML feed and check its type
-    new_opml_tree = ET.parse(args.opml_file)
-    new_opml_root = new_opml_tree.getroot()
-    if new_opml_root.tag != 'opml':
-        logging.error(f'File {args.opml_file} is not a OPML feed')
-        sys.exit(1)
-    # Load internal OPML feed
-    internal_opml_tree = ET.parse(args.data_dir / 'feeds.xml')
-    internal_opml_root = internal_opml_tree.getroot()
-    internal_opml_body = internal_opml_root.find('body')
-    # Iterate through entries in the new feed and look up
-    # in the internal feed if it contains entries with the same URL
+    with open(args.opml_file, 'r', encoding='utf-8') as opml_file, \
+         open(args.data_dir / 'feeds.xml', 'r', encoding='utf-8') as feeds_file:
+        with xml.dom.minidom.parse(opml_file) as opml_dom, \
+             xml.dom.minidom.parse(feeds_file) as feeds_dom:
+            # Check OPML file type
+            if opml_dom.documentElement.tagName != 'opml':
+                logging.error(f'File {args.opml_file} is not a OPML feed')
+                sys.exit(1)
+            opml_body = getChildElementByTagName(opml_dom.documentElement, 'body')
+            feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
+            # Iterate through entries in the new feed and look up
+            # in the internal feed if it contains entries with the same URL
+            for outline in getChildElementsByTagName(opml_body, 'outline'):
+                feed_title = outline.getAttribute('title')
+                feed_url = outline.getAttribute('xmlUrl')
+                if outline.getAttribute('type') != 'rss':
+                    logging.warning(f'Skipping outline {feed_title} that is not RSS feed')
+                    continue
+                found = getChildElementByTagNameAndAttributeValue(feeds_body, 'outline', 'xmlUrl', feed_url)
+                if found is not None:
+                    logging.warning(f'Skipping already known feed {feed_title} with URL {feed_url}')
+                    continue
+                logging.info(f'Importing new feed {feed_title} with URL {feed_url}')
+                # Make feed directory and download feed file
+                feed_index = get_max_feed_index(args.data_dir) + 1
+                feed_dir = args.data_dir / str(feed_index)
+                feed_dir.mkdir(mode=0o755)
+                try:
+                    fetch_feed(feed_dir, feed_url)
+                except urllib.error.URLError as e:
+                    logging.error(f'Error fetching feed: {e.reason}')
+                    feed_dir.rmdir()
+                    continue
+                except ValueError as e:
+                    logging.error(f'Error fetching feed: {e}')
+                    feed_dir.rmdir()
+                    continue
+                # Copy new feed to main feed with additional information
+                shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
+                props = init_main_feed_and_get_properties(feed_dir / 'feed.xml')
+                logging.info(f'Props: {props}')
+
     for new_outline in new_opml_root.iterfind('body/outline'):
         feed_title = new_outline.get('title')
         feed_url = new_outline.get('xmlUrl')
