@@ -107,8 +107,6 @@ def init_main_feed_and_get_properties(feed_path: Path) -> dict:
                 channel = getChildElementByTagName(feed_doc, 'channel')
                 title = getChildElementByTagName(channel, 'title')
                 title_value = getText(title).strip()
-                xml_url = getChildElementByTagNameAndAttributeValue(channel, 'atom:link', 'rel', 'self')
-                xml_url_value = xml_url.getAttribute('href')
                 html_url = getChildElementWithoutAttribute(channel, 'link', 'rel')
                 html_url_value = getText(html_url)
                 # Add stylesheet
@@ -116,8 +114,6 @@ def init_main_feed_and_get_properties(feed_path: Path) -> dict:
                 # This is Atom feed
                 title = getChildElementByTagName(feed_doc, 'title')
                 title_value = getText(title).strip()
-                xml_url = getChildElementByTagNameAndAttributeValue(feed_doc, 'link', 'rel', 'self')
-                xml_url_value = xml_url.getAttribute('href')
                 html_url = getChildElementByTagNameAndAttributeValue(feed_doc, 'link', 'rel', 'alternate')
                 if html_url is None:
                     html_url = getChildElementWithoutAttribute(feed_doc, 'link', 'rel')
@@ -130,7 +126,6 @@ def init_main_feed_and_get_properties(feed_path: Path) -> dict:
     # Return feed properties
     return {
         'title': title_value,
-        'xmlUrl': xml_url_value,
         'htmlUrl': html_url_value
     }
 
