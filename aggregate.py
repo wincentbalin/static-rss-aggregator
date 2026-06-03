@@ -91,14 +91,14 @@ def getChildElementWithoutAttribute(parent: Element, tagName: str, attributeName
 
 def getText(parent: Element) -> Union[str, None]:
     for node in parent.childNodes:
-        if node.nodeType == node.TEXT_NODE:
+        if node.nodeType in (node.TEXT_NODE, node.CDATA_SECTION_NODE):
             return node.data
     return None
 
 
 def init_main_feed_and_get_properties(feed_path: Path) -> dict:
     # Load feed file
-    with open(feed_path, 'r', encoding='utf-8') as feed_file:
+    with open(feed_path, 'r', encoding='utf-8', errors='ignore') as feed_file:
         with xml.dom.minidom.parse(feed_file) as feed_dom:
             # Add stylesheet (different for RSS and Atom)
             feed_doc = feed_dom.documentElement
