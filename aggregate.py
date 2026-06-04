@@ -11,6 +11,7 @@ import urllib.error
 import urllib.request
 import xml.dom.minidom
 from pathlib import Path
+from pyexpat import ExpatError
 from typing import List, Union
 from xml.dom.minidom import Element
 
@@ -44,7 +45,9 @@ def get_max_feed_index(data_dir: Path) -> int:
 
 
 def fetch_feed(feed_dir: Path, url: str, name='current.xml'):
-    with urllib.request.urlopen(url) as response, open(feed_dir / name, 'wb') as file:
+    headers = {'User-Agent': 'Aggregator/1.0'}
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request) as response, open(feed_dir / name, 'wb') as file:
         shutil.copyfileobj(response, file)
 
 
@@ -96,38 +99,41 @@ def getText(parent: Element) -> Union[str, None]:
     return None
 
 
-def init_main_feed_and_get_properties(feed_path: Path) -> dict:
+def join_report(header_row: List[str], rows: List[List[str]]) -> str:
+    return '\n'.join(['\t'.join(row) for row in [header_row] + rows])
+
+
+def init_main_feed_and_get_properties(feed_path: Path):
     # Load feed file
     with open(feed_path, 'r', encoding='utf-8', errors='ignore') as feed_file:
         with xml.dom.minidom.parse(feed_file) as feed_dom:
             # Add stylesheet (different for RSS and Atom)
             feed_doc = feed_dom.documentElement
-            if feed_doc.tagName == 'rss':
+            if feed_doc.tagName in ('rss', 'rdf:RDF'):
                 # This is RSS feed
-                channel = getChildElementByTagName(feed_doc, 'channel')
-                title = getChildElementByTagName(channel, 'title')
-                title_value = getText(title).strip()
-                html_url = getChildElementWithoutAttribute(channel, 'link', 'rel')
-                html_url_value = getText(html_url)
                 # Add stylesheet
+                pi = feed_dom.createProcessingInstruction('xml-stylesheet', 'type="text/xsl" href="../rss2html5.xsl"')
+                feed_dom.insertBefore(pi, feed_doc)
+                #channel = getChildElementByTagName(feed_doc, 'channel')
+                #title = getChildElementByTagName(channel, 'title')
+                #title_value = getText(title).strip()
+                #html_url = getChildElementWithoutAttribute(channel, 'link', 'rel')
+                #html_url_value = getText(html_url)
             elif feed_doc.tagName == 'feed':
                 # This is Atom feed
-                title = getChildElementByTagName(feed_doc, 'title')
-                title_value = getText(title).strip()
-                html_url = getChildElementByTagNameAndAttributeValue(feed_doc, 'link', 'rel', 'alternate')
-                if html_url is None:
-                    html_url = getChildElementWithoutAttribute(feed_doc, 'link', 'rel')
-                html_url_value = html_url.getAttribute('href')
                 # Add stylesheet
+                pi = feed_dom.createProcessingInstruction('xml-stylesheet', 'type="text/xsl" href="../atom2html5.xsl"')
+                feed_dom.insertBefore(pi, feed_doc)
+                #title = getChildElementByTagName(feed_doc, 'title')
+                #title_value = getText(title).strip()
+                #html_url = getChildElementByTagNameAndAttributeValue(feed_doc, 'link', 'rel', 'alternate')
+                #if html_url is None:
+                #    html_url = getChildElementWithoutAttribute(feed_doc, 'link', 'rel')
+                #html_url_value = html_url.getAttribute('href') if html_url is not None else None
             else:
                 raise ValueError('Unknown feed format!')
-            #with open(feed_path, 'w', encoding='utf-8') as changed_file:
-            #    feed_dom.writexml(changed_file, encoding='utf-8')
-    # Return feed properties
-    return {
-        'title': title_value,
-        'htmlUrl': html_url_value
-    }
+            with open(feed_path, 'w', encoding='utf-8') as changed_file:
+                feed_dom.writexml(changed_file, encoding='utf-8')
 
 
 def add_feed(args):
@@ -153,7 +159,7 @@ def fetch_feeds(args):
 def import_feeds(args):
     if not args.data_dir.exists():
         init_data(args.data_dir)
-    # Load new OPML feed and check its type
+    # Load new OPML feed and check its type; also load internal feeds.xml
     with open(args.opml_file, 'r', encoding='utf-8') as opml_file, \
          open(args.data_dir / 'feeds.xml', 'r', encoding='utf-8') as feeds_file:
         with xml.dom.minidom.parse(opml_file) as opml_dom, \
@@ -166,15 +172,19 @@ def import_feeds(args):
             feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
             # Iterate through entries in the new feed and look up
             # in the internal feed if it contains entries with the same URL
+            feeds_imported, feeds_not_imported = [], []
             for outline in getChildElementsByTagName(opml_body, 'outline'):
                 feed_title = outline.getAttribute('title')
                 feed_url = outline.getAttribute('xmlUrl')
+                report_row = [feed_url, feed_title, outline.getAttribute('htmlUrl')]
                 if outline.getAttribute('type') != 'rss':
                     logging.warning(f'Skipping outline {feed_title} that is not RSS feed')
+                    feeds_not_imported.append(['Not a RSS feed'] + report_row)
                     continue
                 found = getChildElementByTagNameAndAttributeValue(feeds_body, 'outline', 'xmlUrl', feed_url)
                 if found is not None:
                     logging.warning(f'Skipping already known feed {feed_title} with URL {feed_url}')
+                    feeds_not_imported.append(['Already known feed'] + report_row)
                     continue
                 logging.info(f'Importing new feed {feed_title} with URL {feed_url}')
                 # Make feed directory and download feed file
@@ -186,55 +196,38 @@ def import_feeds(args):
                 except urllib.error.URLError as e:
                     logging.error(f'Error fetching feed: {e.reason}')
                     feed_dir.rmdir()
+                    feeds_not_imported.append([str(e.reason)] + report_row)
                     continue
                 except ValueError as e:
                     logging.error(f'Error fetching feed: {e}')
                     feed_dir.rmdir()
+                    feeds_not_imported.append([str(e)] + report_row)
                     continue
                 # Copy new feed to main feed with additional information
                 shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
-                props = init_main_feed_and_get_properties(feed_dir / 'feed.xml')
-                logging.info(f'Props: {props}')
-
-    for new_outline in new_opml_root.iterfind('body/outline'):
-        feed_title = new_outline.get('title')
-        feed_url = new_outline.get('xmlUrl')
-        if new_outline.get('type') != 'rss':
-            logging.warning(f'Skipping outline {feed_title} that is not RSS feed')
-            continue
-        found = internal_opml_root.find(f'body/outline[@xmlUrl="{feed_url}"]')
-        if found is not None:
-            logging.warning(f'Skipping already known feed {feed_title} with URL {feed_url}')
-            continue
-        logging.info(f'Importing new feed {feed_title} with URL {feed_url}')
-        # Make feed directory and download feed file
-        feed_index = get_max_feed_index(args.data_dir) + 1
-        feed_dir = args.data_dir / str(feed_index)
-        feed_dir.mkdir(mode=0o755)
-        try:
-            fetch_feed(feed_dir, feed_url)
-        except urllib.error.URLError as e:
-            logging.error(f'Error fetching feed: {e.reason}')
-            feed_dir.rmdir()
-            continue
-        except ValueError as e:
-            logging.error(f'Error fetching feed: {e}')
-            feed_dir.rmdir()
-            continue
-        # Copy new feed to main feed with additional information
-        shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
-        props = init_main_feed_and_get_properties(feed_dir / 'feed.xml')
-        internal_outline = ET.Element('outline', attrib={
-            'title': props['title'],
-            'text': props['title'],
-            'type': 'rss',
-            'xmlUrl': props['xmlUrl'],
-            'htmlUrl': props['htmlUrl'],
-            'index': str(feed_index)
-        })
-        internal_opml_body.append(internal_outline)
-    # Write internal feed
-    internal_opml_tree.write(args.data_dir / 'feeds.xml', encoding='utf-8')
+                try:
+                    init_main_feed_and_get_properties(feed_dir / 'feed.xml')
+                except ExpatError as e:
+                    logging.error(f'XML error: {e}')
+                    shutil.rmtree(feed_dir)
+                    feeds_not_imported.append([str(e)] + report_row)
+                    continue
+                feeds_outline = feeds_dom.createElement('outline')
+                for att_name in ['text', 'type', 'title', 'xmlUrl', 'htmlUrl']:
+                    feeds_outline.setAttribute(att_name, outline.getAttribute(att_name))
+                feeds_outline.setAttribute('index', str(feed_index))
+                feeds_body.appendChild(feeds_outline)
+                feeds_imported.append([str(feed_index)] + report_row)
+            # Print reports
+            if feeds_imported:
+                logging.info('''Feeds imported:
+''' + join_report(['Index', 'Feed URL', 'Title', 'Page URL'], feeds_imported))
+            if feeds_not_imported:
+                logging.info('''Feeds imported:
+''' + join_report(['Error', 'Feed URL', 'Title', 'Page URL'], feeds_not_imported))
+            # Save changed 
+            with open(args.data_dir / 'feeds.xml', 'w', encoding='utf-8') as changed_file:
+                feeds_dom.writexml(changed_file, encoding='utf-8')
 
 
 def export_feeds(args):
