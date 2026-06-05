@@ -111,7 +111,6 @@ def getChildElementWithAttribute(parent: Element, tagName: str, attributeName: s
     return None
 
 
-
 def getChildElementWithoutAttribute(parent: Element, tagName: str, attributeName: str) -> Union[Element, None]:
     for node in parent.childNodes:
         if node.nodeType == node.ELEMENT_NODE and node.tagName == tagName:
@@ -142,22 +141,11 @@ def init_main_feed_and_get_properties(feed_path: Path):
                 # Add stylesheet
                 pi = feed_dom.createProcessingInstruction('xml-stylesheet', 'type="text/xsl" href="../rss2html5.xsl"')
                 feed_dom.insertBefore(pi, feed_doc)
-                #channel = getChildElementByTagName(feed_doc, 'channel')
-                #title = getChildElementByTagName(channel, 'title')
-                #title_value = getText(title).strip()
-                #html_url = getChildElementWithoutAttribute(channel, 'link', 'rel')
-                #html_url_value = getText(html_url)
             elif feed_doc.tagName == 'feed':
                 # This is Atom feed
                 # Add stylesheet
                 pi = feed_dom.createProcessingInstruction('xml-stylesheet', 'type="text/xsl" href="../atom2html5.xsl"')
                 feed_dom.insertBefore(pi, feed_doc)
-                #title = getChildElementByTagName(feed_doc, 'title')
-                #title_value = getText(title).strip()
-                #html_url = getChildElementByTagNameAndAttributeValue(feed_doc, 'link', 'rel', 'alternate')
-                #if html_url is None:
-                #    html_url = getChildElementWithoutAttribute(feed_doc, 'link', 'rel')
-                #html_url_value = html_url.getAttribute('href') if html_url is not None else None
             else:
                 raise ValueError('Unknown feed format!')
             write_dom(feed_path, feed_dom)
@@ -207,6 +195,14 @@ def add_feed(args):
         logging.error(f'Error fetching feed: {e}')
         feed_dir.rmdir()
         sys.exit(1)
+    # Copy new feed to main feed with additional information
+    shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
+    try:
+        init_main_feed_and_get_properties(feed_dir / 'feed.xml')
+    except ExpatError as e:
+        logging.error(f'XML error: {e}')
+        shutil.rmtree(feed_dir)
+        sys.exit(1)
     # Add feed to feeds index
     feeds_path = args.data_dir / 'feeds.xml'
     with open(feeds_path, 'r', encoding='utf-8') as feeds_file:
@@ -218,6 +214,7 @@ def add_feed(args):
             feeds_outline.setAttribute('title', feed_title)
             feeds_outline.setAttribute('xmlUrl', feed_url)
             feeds_outline.setAttribute('htmlUrl', args.page_url)
+            feeds_outline.setAttribute('index', str(feed_index))
             feeds_body.appendChild(feeds_outline)
             write_dom(feeds_path, feeds_dom)
     rebuild_index(args.data_dir)
@@ -331,6 +328,7 @@ def import_feeds(args):
                     shutil.rmtree(feed_dir)
                     feeds_not_imported.append([str(e)] + report_row)
                     continue
+                # Add feed to feeds index
                 feeds_outline = feeds_dom.createElement('outline')
                 for att_name in ['text', 'type', 'title', 'xmlUrl', 'htmlUrl']:
                     feeds_outline.setAttribute(att_name, outline.getAttribute(att_name))
