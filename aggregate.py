@@ -139,6 +139,11 @@ def init_main_feed_and_get_properties(feed_path: Path):
             write_dom(feed_path, feed_dom)
 
 
+def rebuild_index(data_dir: Path):
+    # TODO Implement this function!
+    pass
+
+
 def add_feed(args):
     pass
 
@@ -228,8 +233,11 @@ def import_feeds(args):
             if feeds_not_imported:
                 logging.info('''Feeds imported:
 ''' + join_report(['Error', 'Feed URL', 'Title', 'Page URL'], feeds_not_imported))
-            # Save changed 
-            write_dom(args.data_dir / 'feeds.xml', feeds_dom)
+            if feeds_imported:
+                # Save changed 
+                write_dom(args.data_dir / 'feeds.xml', feeds_dom)
+                # Rebuild index
+                rebuild_index(args.data_dir)
 
 
 def export_feeds(args):
