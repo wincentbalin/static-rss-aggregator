@@ -167,7 +167,18 @@ def list_feeds(args):
 
 
 def rename_feed(args):
-    pass
+    feeds_path = args.data_dir / 'feeds.xml'
+    with open(feeds_path, 'r', encoding='utf-8') as feeds_file:
+        with xml.dom.minidom.parse(feeds_file) as feeds_dom:
+            feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
+            feed = getChildElementByTagNameAndAttributeValue(feeds_body, 'outline', 'index', str(args.feed_index))
+            if feed is None:
+                logging.error(f'Feed {args.feed_index} not found')
+                sys.exit(1)
+            old_title = feed.getAttribute('title')
+            feed.setAttribute('title', args.new_title)
+            write_dom(feeds_path, feeds_dom)
+    logging.info(f'Renamed feed {args.feed_index} from {old_title} to {args.new_title}')
 
 
 def remove_feed(args):
@@ -286,7 +297,7 @@ def main():
 
     parser_rename = subparsers.add_parser('rename', help='Rename feed')
     parser_rename.add_argument('feed_index', type=int, help='Index of the feed to be renamed')
-    parser_rename.add_argument('name', help='New name')
+    parser_rename.add_argument('new_title', help='New title')
     parser_rename.set_defaults(func=rename_feed)
     
     parser_rm = subparsers.add_parser('rm', help='Remove feed')
