@@ -151,7 +151,19 @@ def add_feed(args):
 
 
 def list_feeds(args):
-    pass
+    feeds_report = []
+    with open(args.data_dir / 'feeds.xml', 'r', encoding='utf-8') as feeds_file:
+        with xml.dom.minidom.parse(feeds_file) as feeds_dom:
+            feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
+            for feed in getChildElementsByTagName(feeds_body, 'outline'):
+                feed_info = [
+                    feed.getAttribute(name) for name in ['index', 'title', 'xmlUrl']
+                ]
+                feeds_report.append(feed_info)
+    feeds_report.sort(key=lambda row: int(row[0]))
+    print(f'{len(feeds_report)} feeds:')
+    for row in feeds_report:
+        print('\t'.join(row))
 
 
 def rename_feed(args):
