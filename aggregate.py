@@ -171,7 +171,18 @@ def rename_feed(args):
 
 
 def remove_feed(args):
-    pass
+    feeds_path = args.data_dir / 'feeds.xml'
+    with open(feeds_path, 'r', encoding='utf-8') as feeds_file:
+        with xml.dom.minidom.parse(feeds_file) as feeds_dom:
+            feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
+            feed = getChildElementByTagNameAndAttributeValue(feeds_body, 'outline', 'index', str(args.feed_index))
+            if feed is None:
+                logging.error(f'Feed {args.feed_index} not found')
+                sys.exit(1)
+            feed_title = feed.getAttribute('title')
+            feeds_body.removeChild(feed)
+            write_dom(feeds_path, feeds_dom)
+            logging.info(f'Removed feed {args.feed_index} ({feed_title})')
 
 
 def fetch_feeds(args):
