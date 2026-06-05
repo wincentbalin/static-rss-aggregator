@@ -313,11 +313,11 @@ def import_feeds(args):
                 feeds_imported.append([str(feed_index)] + report_row)
             # Print reports
             if feeds_imported:
-                logging.info('''Feeds imported:
-''' + join_report(['Index', 'Feed URL', 'Title', 'Page URL'], feeds_imported))
+                logging.info('Feeds imported:\n' +
+                             join_report(['Index', 'Feed URL', 'Title', 'Page URL'], feeds_imported))
             if feeds_not_imported:
-                logging.info('''Feeds imported:
-''' + join_report(['Error', 'Feed URL', 'Title', 'Page URL'], feeds_not_imported))
+                logging.info('Feeds not imported:\n' +
+                             join_report(['Error', 'Feed URL', 'Title', 'Page URL'], feeds_not_imported))
             if feeds_imported:
                 # Save changed 
                 write_dom(args.data_dir / 'feeds.xml', feeds_dom)
