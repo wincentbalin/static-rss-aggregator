@@ -13,7 +13,12 @@ import xml.dom.minidom
 from pathlib import Path
 from pyexpat import ExpatError
 from typing import List, Union
-from xml.dom.minidom import Element
+from xml.dom.minidom import Element, Document
+
+
+def write_dom(path: Path, dom: Document):
+    with open(path, 'w', encoding='utf-8') as xml_file:
+        dom.writexml(xml_file, encoding='utf-8')
 
 
 def init_data(data_dir: Path):
@@ -28,8 +33,7 @@ def init_data(data_dir: Path):
     <body>
     </body>
 </opml>''')
-    with open(data_dir / 'feeds.xml', 'w', encoding='utf-8') as opml_file:
-        opml_root.writexml(opml_file, encoding='utf-8')
+    write_dom(data_dir / 'feeds.xml', opml_root)
 
 
 def get_max_feed_index(data_dir: Path) -> int:
@@ -132,8 +136,7 @@ def init_main_feed_and_get_properties(feed_path: Path):
                 #html_url_value = html_url.getAttribute('href') if html_url is not None else None
             else:
                 raise ValueError('Unknown feed format!')
-            with open(feed_path, 'w', encoding='utf-8') as changed_file:
-                feed_dom.writexml(changed_file, encoding='utf-8')
+            write_dom(feed_path, feed_dom)
 
 
 def add_feed(args):
@@ -226,8 +229,7 @@ def import_feeds(args):
                 logging.info('''Feeds imported:
 ''' + join_report(['Error', 'Feed URL', 'Title', 'Page URL'], feeds_not_imported))
             # Save changed 
-            with open(args.data_dir / 'feeds.xml', 'w', encoding='utf-8') as changed_file:
-                feeds_dom.writexml(changed_file, encoding='utf-8')
+            write_dom(args.data_dir / 'feeds.xml', feeds_dom)
 
 
 def export_feeds(args):
