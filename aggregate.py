@@ -32,8 +32,9 @@ class AlternateLinkParser(HTMLParser):
             attr_dict = dict(attrs)
             if attr_dict.get('rel', '').lower() == 'alternate':
                 href = attr_dict.get('href')
+                title = attr_dict.get('title')
                 if href:
-                    self.alternate_links.append(href)
+                    self.alternate_links.append((href, title))
     
     def get_alternate_links(self) -> list:
         return self.alternate_links
@@ -180,10 +181,20 @@ def add_feed(args):
         # Parse page
         parser.feed(response.read().decode(charset, errors='replace'))
     alternate_links = parser.get_alternate_links()
-    if not alternate_links:
+    # Get feed URL
+    if len(alternate_links) == 0:
         logging.error(f'No feed links found at {args.page_url}')
         sys.exit(1)
-    print(alternate_links)
+    elif len(alternate_links) == 1:
+        feed_url, feed_title = alternate_links[0]
+    else:
+        print('Found multiple feeds:')
+        for index, (url, title) in enumerate(alternate_links, 1):
+            print(f'{index}: {url} ({title})')
+        index = input('Which feed do you want to use? ')
+        feed_url, feed_title = alternate_links[int(index) - 1]
+    print(f'Feed: {feed_url} ({feed_title})')
+    #rebuild_index(args.data_dir)
 
 
 def list_feeds(args):
