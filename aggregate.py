@@ -32,7 +32,7 @@ class AlternateLinkParser(HTMLParser):
             attr_dict = dict(attrs)
             if attr_dict.get('rel', '').lower() == 'alternate':
                 href = attr_dict.get('href')
-                title = attr_dict.get('title')
+                title = attr_dict.get('title', 'Untitled feed')
                 if href:
                     self.alternate_links.append((href, title))
     
@@ -193,8 +193,34 @@ def add_feed(args):
             print(f'{index}: {url} ({title})')
         index = input('Which feed do you want to use? ')
         feed_url, feed_title = alternate_links[int(index) - 1]
-    print(f'Feed: {feed_url} ({feed_title})')
-    #rebuild_index(args.data_dir)
+    # Download feed
+    feed_index = get_max_feed_index(args.data_dir) + 1
+    feed_dir = args.data_dir / str(feed_index)
+    feed_dir.mkdir(mode=0o755)
+    try:
+        fetch_feed(feed_dir, feed_url)
+    except urllib.error.URLError as e:
+        logging.error(f'Error fetching feed: {e.reason}')
+        feed_dir.rmdir()
+        sys.exit(1)
+    except ValueError as e:
+        logging.error(f'Error fetching feed: {e}')
+        feed_dir.rmdir()
+        sys.exit(1)
+    # Add feed to feeds index
+    feeds_path = args.data_dir / 'feeds.xml'
+    with open(feeds_path, 'r', encoding='utf-8') as feeds_file:
+        with xml.dom.minidom.parse(feeds_file) as feeds_dom:
+            feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
+            feeds_outline = feeds_dom.createElement('outline')
+            feeds_outline.setAttribute('text', feed_title)
+            feeds_outline.setAttribute('type', 'rss')
+            feeds_outline.setAttribute('title', feed_title)
+            feeds_outline.setAttribute('xmlUrl', feed_url)
+            feeds_outline.setAttribute('htmlUrl', args.page_url)
+            feeds_body.appendChild(feeds_outline)
+            write_dom(feeds_path, feeds_dom)
+    rebuild_index(args.data_dir)
 
 
 def list_feeds(args):
