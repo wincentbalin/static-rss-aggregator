@@ -13,7 +13,30 @@ import xml.dom.minidom
 from pathlib import Path
 from pyexpat import ExpatError
 from typing import List, Union
+from html.parser import HTMLParser
 from xml.dom.minidom import Element, Document
+
+
+class AlternateLinkParser(HTMLParser):
+    """
+    Parse HTML contents and extract <link rel="alternate".../> tags
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.alternate_links = []
+    
+    def handle_starttag(self, tag: str, attrs: List[tuple[str, Union[str, None]]]):
+        # Process <link> tags only
+        if tag.lower() == 'link':
+            attr_dict = dict(attrs)
+            if attr_dict.get('rel', '').lower() == 'alternate':
+                href = attr_dict.get('href')
+                if href:
+                    self.alternate_links.append(href)
+    
+    def get_alternate_links(self) -> list:
+        return self.alternate_links
 
 
 def write_dom(path: Path, dom: Document):
@@ -147,7 +170,20 @@ def rebuild_index(data_dir: Path):
 
 
 def add_feed(args):
-    pass
+    # Get page and parse it for alternate links
+    parser = AlternateLinkParser()
+    headers = {'User-Agent': 'Aggregator/1.0'}
+    request = urllib.request.Request(args.page_url, headers=headers)
+    with urllib.request.urlopen(request) as response:
+        # Ensure decoding correct charset
+        charset = response.headers.get_content_charset() or 'utf-8'
+        # Parse page
+        parser.feed(response.read().decode(charset, errors='replace'))
+    alternate_links = parser.get_alternate_links()
+    if not alternate_links:
+        logging.error(f'No feed links found at {args.page_url}')
+        sys.exit(1)
+    print(alternate_links)
 
 
 def list_feeds(args):
@@ -288,8 +324,7 @@ def main():
     subparsers = parser.add_subparsers(help='Commands')
 
     parser_add = subparsers.add_parser('add', help='Add RSS or Atom feed')
-    parser_add.add_argument('feed_url', help='URL of the feed')
-    parser_add.add_argument('feed_name', help='Name of the feed')
+    parser_add.add_argument('page_url', help='URL of the page to get a feed from')
     parser_add.set_defaults(func=add_feed)
     
     parser_list = subparsers.add_parser('list', help='List feeds')
