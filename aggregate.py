@@ -141,7 +141,9 @@ def init_main_feed_and_get_properties(feed_path: Path):
 
 def rebuild_index(data_dir: Path):
     # TODO Implement this function!
-    pass
+    with open(data_dir / 'feeds.xml', 'r', encoding='utf-8') as feeds_file:
+        with xml.dom.minidom.parse(feeds_file) as feeds_dom:
+            feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
 
 
 def add_feed(args):
