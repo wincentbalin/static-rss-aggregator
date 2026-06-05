@@ -225,6 +225,7 @@ def rename_feed(args):
             old_title = feed.getAttribute('title')
             feed.setAttribute('title', args.new_title)
             write_dom(feeds_path, feeds_dom)
+            rebuild_index(args.data_dir)
     logging.info(f'Renamed feed {args.feed_index} from {old_title} to {args.new_title}')
 
 
@@ -240,6 +241,7 @@ def remove_feed(args):
             feed_title = feed.getAttribute('title')
             feeds_body.removeChild(feed)
             write_dom(feeds_path, feeds_dom)
+            rebuild_index(args.data_dir)
             logging.info(f'Removed feed {args.feed_index} ({feed_title})')
 
 
