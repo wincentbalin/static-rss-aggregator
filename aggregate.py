@@ -227,7 +227,7 @@ def list_feeds(args):
             feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
             for feed in getChildElementsByTagName(feeds_body, 'outline'):
                 feed_info = [
-                    feed.getAttribute(name) for name in ['index', 'title', 'xmlUrl']
+                    feed.getAttribute(name) for name in ['index', 'text', 'xmlUrl']
                 ]
                 feeds_report.append(feed_info)
     feeds_report.sort(key=lambda row: int(row[0]))
@@ -245,8 +245,8 @@ def rename_feed(args):
             if feed is None:
                 logging.error(f'Feed {args.feed_index} not found')
                 sys.exit(1)
-            old_title = feed.getAttribute('title')
-            feed.setAttribute('title', args.new_title)
+            old_title = feed.getAttribute('text')
+            feed.setAttribute('text', args.new_title)
             write_dom(feeds_path, feeds_dom)
             rebuild_index(args.data_dir)
     logging.info(f'Renamed feed {args.feed_index} from {old_title} to {args.new_title}')
@@ -261,7 +261,7 @@ def remove_feed(args):
             if feed is None:
                 logging.error(f'Feed {args.feed_index} not found')
                 sys.exit(1)
-            feed_title = feed.getAttribute('title')
+            feed_title = feed.getAttribute('text')
             feeds_body.removeChild(feed)
             write_dom(feeds_path, feeds_dom)
             rebuild_index(args.data_dir)
