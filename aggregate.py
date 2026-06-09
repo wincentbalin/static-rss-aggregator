@@ -7,12 +7,15 @@ import sys
 import shutil
 import logging
 import argparse
+import email.utils
 import urllib.error
 import urllib.request
 import xml.dom.minidom
 from pathlib import Path
+from datetime import datetime
 from pyexpat import ExpatError
 from typing import List, Union
+from collections import namedtuple
 from html.parser import HTMLParser
 from xml.dom.minidom import Element, Document
 
@@ -73,10 +76,19 @@ def get_max_feed_index(data_dir: Path) -> int:
 
 
 def fetch_feed(feed_dir: Path, url: str, name='current.xml'):
+    feed_path = feed_dir / name
+    # Download file
     headers = {'User-Agent': 'Aggregator/1.0'}
     request = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(request) as response, open(feed_dir / name, 'wb') as file:
+    with urllib.request.urlopen(request) as response, open(feed_path, 'wb') as file:
+        last_modified = response.headers.get('Last-Modified')
         shutil.copyfileobj(response, file)
+    # Set modification time and fix feed file
+    if last_modified:
+        default_datetime = email.utils.parsedate_to_datetime(last_modified)
+    else:
+        default_datetime = datetime.now()
+    fix_current_feed(feed_path, default_datetime)
 
 
 def getChildElementsByTagName(parent: Element, tagName: str) -> List[Element]:
@@ -126,11 +138,96 @@ def getText(parent: Element) -> Union[str, None]:
     return None
 
 
+def getDateTimeForAtom(entry_date: Element) -> datetime:
+    date_text = getText(entry_date)
+    if date_text.endswith('Z'):  # Z = UTC
+        date_text = date_text.replace('Z', '+00:00')
+    if date_text.endswith('+0000'):  # Mangled UTC
+        date_text = date_text.replace('+0000', '+00:00')
+    return datetime.fromisoformat(date_text)
+
+
+def getDateTimeForRSS(item_date: Element) -> datetime:
+    date_text = getText(item_date)
+    if date_text[0].isdigit():
+        return getDateTimeForAtom(item_date)  # Fallback to ISO date
+    if checkIfThisIsGermanRFC822Date(date_text):
+        date_text = translateRFC822DateFromGerman(date_text)
+    return email.utils.parsedate_to_datetime(date_text)
+
+
+def checkIfThisIsGermanRFC822Date(ds: str) -> bool:
+    return ds[:4] in {'Mo, ', 'Di, ', 'Mi, ', 'Do, ', 'Fr, ', 'Sa, ', 'So, '}
+
+
+def translateRFC822DateFromGerman(ds: str) -> str:
+    TR_WEEKDAY = {'Mo, ': 'Mon, ', 'Di, ': 'Tue, ', 'Mi, ': 'Wed, ',
+                  'Do, ': 'Thu, ', 'Fr, ': 'Fri, ', 'Sa, ': 'Sat, ',
+                  'So, ': 'Sun, '}
+    for orig, trans in TR_WEEKDAY.items():
+        if orig in ds:
+            ds = ds.replace(orig, trans, 1)
+            break
+    # Jan, Feb, Apr, Jun, Jul, Aug, Sep, Nov remain unchanged
+    TR_MONTH = {' Mär ': ' Mar ', ' Mai ': ' May ',
+                ' Okt ': ' Oct ', ' Dez ': ' Dec '}
+    for orig, trans in TR_MONTH.items():
+        if orig in ds:
+            ds = ds.replace(orig, trans, 1)
+            break
+    return ds
+
+
 def join_report(header_row: List[str], rows: List[List[str]]) -> str:
     return '\n'.join(['\t'.join(row) for row in [header_row] + rows])
 
 
-def init_main_feed_and_get_properties(feed_path: Path):
+def fix_current_feed(feed_path: Path, default_datetime: datetime):
+    with open(feed_path, 'r', encoding='utf-8', errors='ignore') as feed_file:
+        with xml.dom.minidom.parse(feed_file) as feed_dom:
+            # Add stylesheet (different for RSS and Atom)
+            feed_doc = feed_dom.documentElement
+            if feed_doc.tagName == 'rss':
+                # This is RSS feed 
+                channel = getChildElementByTagName(feed_doc, 'channel')
+                for item in getChildElementsByTagName(channel, 'item'):
+                    item_date = getChildElementByTagName(item, 'pubDate')
+                    # If not pubDate item exists, create one (empty yet)
+                    if item_date is None:
+                        item_date = feed_dom.createElement('pubDate')
+                        item.appendChild(item_date)
+                    # Set time in empty pubDate elements
+                    item_date_text = getText(item_date)
+                    if not item_date_text:
+                        item_date_text = email.utils.format_datetime(default_datetime)
+                        item_date.appendChild(feed_dom.createTextNode(item_date_text))
+                    # Translate German dates to ISO ones
+                    if checkIfThisIsGermanRFC822Date(item_date_text):
+                        item_date_text = translateRFC822DateFromGerman(item_date_text)
+                        item_date.removeChild(item_date.firstChild)
+                        item_date.appendChild(feed_dom.createTextNode(item_date_text))
+            elif feed_doc.tagName == 'feed':
+                # This is Atom feed
+                for entry in getChildElementsByTagName(feed_doc, 'entry'):
+                    for entry_date_name in ['updated', 'published']:
+                        entry_date = getChildElementByTagName(entry, entry_date_name)
+                        if entry_date is None:
+                            continue
+                        entry_date_text = getText(entry_date)
+                        if entry_date_text.endswith('Z'):  # Z = UTC
+                            entry_date_text = entry_date_text.replace('Z', '+00:00')
+                            entry_date.removeChild(entry_date.firstChild)
+                            entry_date.appendChild(feed_dom.createTextNode(entry_date_text))
+                        elif entry_date_text.endswith('+0000'):  # Mangled UTC
+                            entry_date_text = entry_date_text.replace('+0000', '+00:00')
+                            entry_date.removeChild(entry_date.firstChild)
+                            entry_date.appendChild(feed_dom.createTextNode(entry_date_text))
+            else:
+                raise ValueError(f'Unknown feed format in {feed_path}')
+            write_dom(feed_path, feed_dom)
+
+
+def init_main_feed(feed_path: Path):
     # Load feed file
     with open(feed_path, 'r', encoding='utf-8', errors='ignore') as feed_file:
         with xml.dom.minidom.parse(feed_file) as feed_dom:
@@ -147,15 +244,94 @@ def init_main_feed_and_get_properties(feed_path: Path):
                 pi = feed_dom.createProcessingInstruction('xml-stylesheet', 'type="text/xsl" href="../atom2html5.xsl"')
                 feed_dom.insertBefore(pi, feed_doc)
             else:
-                raise ValueError('Unknown feed format!')
+                raise ValueError(f'Unknown feed format in {feed_path}')
             write_dom(feed_path, feed_dom)
 
 
 def rebuild_index(data_dir: Path):
     # TODO Implement this function!
+    Article = namedtuple('Article', ['datetime', 'feed_index', 'id', 'title'])
+    articles, feeds = [], {}
+    index_title = ''
     with open(data_dir / 'feeds.xml', 'r', encoding='utf-8') as feeds_file:
         with xml.dom.minidom.parse(feeds_file) as feeds_dom:
+            feeds_head = getChildElementByTagName(feeds_dom.documentElement, 'head')
+            index_title = getText(getChildElementByTagName(feeds_head, 'title'))
+            # Go through outlines
             feeds_body = getChildElementByTagName(feeds_dom.documentElement, 'body')
+            for outline in getChildElementsByTagName(feeds_body, 'outline'):
+                # Load feed
+                feed_index = outline.getAttribute('index')
+                feed_title = outline.getAttribute('text')
+                feeds[feed_index] = feed_title
+                feed_path = data_dir / feed_index / 'feed.xml'
+                with open(feed_path, 'r', encoding='utf-8') as feed_file:
+                    with xml.dom.minidom.parse(feed_file) as feed_dom:
+                        # Process entries
+                        feed_doc = feed_dom.documentElement
+                        if feed_doc.tagName == 'rss':
+                            # This is RSS 0.92 or RSS 2.0 feed
+                            feed_channel = getChildElementByTagName(feed_doc, 'channel')
+                            for item in getChildElementsByTagName(feed_channel, 'item'):
+                                item_title = getChildElementByTagName(item, 'title')
+                                item_date = getChildElementByTagName(item, 'pubDate')
+                                item_guid = getChildElementByTagName(item, 'guid')
+                                if item_guid is None:
+                                    item_guid = getChildElementByTagName(item, 'link')
+                                articles.append(
+                                    Article(getDateTimeForRSS(item_date), feed_index,
+                                            getText(item_guid), getText(item_title))
+                                )
+                        elif feed_doc.tagName == 'rdf:RDF':
+                            # This is RSS 1.0 feed
+                            for item in getChildElementsByTagName(feed_doc, 'item'):
+                                item_title = getChildElementByTagName(item, 'title')
+                                item_date = getChildElementByTagName(item, 'dc:date')
+                                item_id = getChildElementByTagName(item, 'dc:identifier')
+                                articles.append(
+                                    Article(getDateTimeForRSS(item_date), feed_index,
+                                            getText(item_id), getText(item_title))
+                                )
+                        elif feed_doc.tagName == 'feed':
+                            # This is Atom feed
+                            for entry in getChildElementsByTagName(feed_doc, 'entry'):
+                                entry_title = getChildElementByTagName(entry, 'title')
+                                entry_date = getChildElementByTagName(entry, 'updated')
+                                if entry_date is None:
+                                    entry_date = getChildElementByTagName(entry, 'published')
+                                entry_id = getChildElementByTagName(entry, 'id')
+                                articles.append(
+                                    Article(getDateTimeForAtom(entry_date), feed_index,
+                                            getText(entry_id), getText(entry_title))
+                                )
+                        else:
+                            raise ValueError(f'Unknown feed format in {feed_path}')
+    # Save new index
+    for index, article in enumerate(articles):
+        local_datetime = article.datetime
+        #articles[i] = articles[i]._replace(datetime=)
+
+    articles.sort(key=lambda article: article.datetime, reverse=True)
+    with open(data_dir / 'index.html', 'w', encoding='utf-8') as index_file:
+        print(f'''\
+<!DOCTYPE html>
+<html>
+<head>
+<title>{index_title}</title>
+</head>
+<body>''', file=index_file)
+        print('<h1>Articles</h1>', file=index_file)
+        for article in articles:
+            print(f'''\
+<p>
+    <time datetime="{article.datetime}">{article.datetime.date().isoformat()}</time>
+</p>''', file=index_file)
+        print('<h1>Feeds</h1>', file=index_file)
+        print(f'''\
+</body>
+</html>''', file=index_file)
+    print(len(feeds))
+    print(index_title)
 
 
 def add_feed(args):
@@ -195,14 +371,13 @@ def add_feed(args):
         logging.error(f'Error fetching feed: {e}')
         feed_dir.rmdir()
         sys.exit(1)
-    # Copy new feed to main feed with additional information
-    shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
-    try:
-        init_main_feed_and_get_properties(feed_dir / 'feed.xml')
     except ExpatError as e:
         logging.error(f'XML error: {e}')
         shutil.rmtree(feed_dir)
         sys.exit(1)
+    # Copy new feed to main feed with additional information
+    shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
+    init_main_feed(feed_dir / 'feed.xml')
     # Add feed to feeds index
     feeds_path = args.data_dir / 'feeds.xml'
     with open(feeds_path, 'r', encoding='utf-8') as feeds_file:
@@ -269,7 +444,7 @@ def remove_feed(args):
 
 
 def fetch_feeds(args):
-    pass
+    rebuild_index(args.data_dir)
 
 
 def import_feeds(args):
@@ -311,23 +486,22 @@ def import_feeds(args):
                     fetch_feed(feed_dir, feed_url)
                 except urllib.error.URLError as e:
                     logging.error(f'Error fetching feed: {e.reason}')
-                    feed_dir.rmdir()
+                    shutil.rmtree(feed_dir)
                     feeds_not_imported.append([str(e.reason)] + report_row)
                     continue
                 except ValueError as e:
                     logging.error(f'Error fetching feed: {e}')
-                    feed_dir.rmdir()
+                    shutil.rmtree(feed_dir)
                     feeds_not_imported.append([str(e)] + report_row)
                     continue
-                # Copy new feed to main feed with additional information
-                shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
-                try:
-                    init_main_feed_and_get_properties(feed_dir / 'feed.xml')
                 except ExpatError as e:
                     logging.error(f'XML error: {e}')
                     shutil.rmtree(feed_dir)
                     feeds_not_imported.append([str(e)] + report_row)
                     continue
+                # Copy new feed to main feed with additional information
+                shutil.copy(feed_dir / 'current.xml', feed_dir / 'feed.xml')
+                init_main_feed(feed_dir / 'feed.xml')
                 # Add feed to feeds index
                 feeds_outline = feeds_dom.createElement('outline')
                 for att_name in ['text', 'type', 'title', 'xmlUrl', 'htmlUrl']:
