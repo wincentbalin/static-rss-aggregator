@@ -9,7 +9,7 @@ usage()
     echo
     echo Commands: init, import, fetch, add, list, rename, remove, export
     echo
-    echo Arguments:
+    echo Arguments for commands:
     echo "    import    OPML file"
     echo "    add       Page URL"
     echo "    rename    Feed index, new name"
@@ -77,7 +77,17 @@ EOF
         FEED_INDEX=`get_max_feed_index`
         FEED_INDEX=`expr $FEED_INDEX + 1`
         echo Feed index: $FEED_INDEX
-        xsltproc --stringparam opmlFeed "$OPML_FEED"
+
+        IFS='\n' set -- $(xsltproc --stringparam feeds_xml "$FEEDS_XML" "$SINGLEFEED_XSL" "$OPML_FILE")
+        TEXT="$1"
+        TITLE="$2"
+        XML_URL="$3"
+        HTML_URL="$4"
+
+        echo Text: $TEXT
+        echo Title: $TITLE
+        echo XML URL: $XML_URL
+        echo HTML URL: $HTML_URL
         ;;
     fetch)
         echo Fetching feeds
