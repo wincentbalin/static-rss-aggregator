@@ -11,7 +11,7 @@
 
     <!-- Match the root element and process outlines -->
     <xsl:template match="/">
-        <xsl:variable name="firstMissing" select="//outline[not(@xmlUrl = $feeds//outline/@xmlUrl)][1]"></xsl:variable>
+        <xsl:variable name="firstMissing" select="//outline[@type="rss" and not(@xmlUrl = $feeds//outline/@xmlUrl)][1]"></xsl:variable>
             <!-- Output attributes, one per line -->
             <xsl:value-of select="$firstMissing/@text"/><xsl:text>&#10;</xsl:text>
             <xsl:value-of select="$firstMissing/@title"/><xsl:text>&#10;</xsl:text>
