@@ -3,7 +3,7 @@
     <!-- Default RFC822 date to set if non-existent -->
     <xsl:param name="default_date"></xsl:param>
 
-    <!-- Output results as text lines -->
+    <!-- Output results as indented XML -->
     <xsl:output method="xml" encoding="utf-8" indent="yes"></xsl:output>
 
     <!-- Do identity transform -->
